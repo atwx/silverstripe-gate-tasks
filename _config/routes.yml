@@ -1,0 +1,12 @@
+---
+Name: gatetasks-routes
+Before: '#rootroutes'
+Only:
+  environment: 'dev'
+---
+# Where the browser lands after authorising the command line. Only in dev: the
+# redirect target of a developer's login has no business existing on a
+# production site, and the controller checks again before answering.
+SilverStripe\Control\Director:
+  rules:
+    '_silvergatecallback': 'Atwx\GateTasks\Controllers\OAuthCallbackController'
