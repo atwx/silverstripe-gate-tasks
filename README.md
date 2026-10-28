@@ -92,6 +92,10 @@ Anything after a `--` is passed on to the remote task as options.
 > shortcut's, so `--only-db` arrives and `--url=…` does not, while `-u=…` does.
 > Declare options without a shortcut on tasks meant to be run this way.
 
+Live sites ask to confirm every `dev/` URL before running it
+(`DevUrlsConfirmationMiddleware`). The task submits that confirmation itself, as
+the account the session belongs to, so the remote task runs without a browser.
+
 A task whose name the site does not know is reported as a failure. The runner
 answers `200` either way and says so only in the page, so the exit code comes
 from reading that.

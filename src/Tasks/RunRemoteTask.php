@@ -5,6 +5,9 @@ namespace Atwx\GateTasks\Tasks;
 use Atwx\GateTasks\Services\RemoteSession;
 use Atwx\GateTasks\Services\Status;
 use GuzzleHttp\Client;
+use GuzzleHttp\Psr7\Uri;
+use GuzzleHttp\Psr7\UriResolver;
+use Psr\Http\Message\ResponseInterface;
 use SilverStripe\Dev\BuildTask;
 use SilverStripe\PolyExecution\PolyOutput;
 use Symfony\Component\Console\Command\Command;
@@ -162,10 +165,24 @@ class RunRemoteTask extends BuildTask
             $clientOptions['auth'] = $httpAuth;
         }
 
-        $response = (new Client($clientOptions))->get(
-            $remoteUrl . '/dev/tasks/' . rawurlencode($taskName),
-            ['query' => $query]
-        );
+        $client = new Client($clientOptions);
+        $taskUrl = $remoteUrl . '/dev/tasks/' . rawurlencode($taskName);
+        $response = $client->get($taskUrl, ['query' => $query, 'allow_redirects' => false]);
+        $location = $response->getHeaderLine('Location');
+
+        // Live sites ask to confirm dev/ URLs first (DevUrlsConfirmationMiddleware).
+        if ($location !== '' && str_contains($location, '/dev/confirm/')) {
+            $response = $this->confirm($client, (string) UriResolver::resolve(
+                new Uri($taskUrl),
+                new Uri($location)
+            ));
+            if ($response === null) {
+                Status::note($output, 'Die Sicherheitsbestätigung der Seite ließ sich nicht abschicken.');
+                return Command::FAILURE;
+            }
+        } elseif ($location !== '') {
+            $response = $client->get($taskUrl, ['query' => $query]);
+        }
 
         $status = $response->getStatusCode();
 
@@ -229,6 +246,39 @@ class RunRemoteTask extends BuildTask
         }
 
         return Command::SUCCESS;
+    }
+
+    /**
+     * Submits the confirmation form of a dev/ URL. Confirming redirects back to
+     * the task, so the response is the task's own output.
+     */
+    protected function confirm(Client $client, string $confirmUrl): ?ResponseInterface
+    {
+        $html = (string) $client->get($confirmUrl, ['stream' => false])->getBody();
+        $document = new \DOMDocument();
+        if (!@$document->loadHTML($html)) {
+            return null;
+        }
+        $form = $document->getElementsByTagName('form')->item(0);
+        if (!$form instanceof \DOMElement) {
+            return null;
+        }
+        $fields = [];
+        foreach ($form->getElementsByTagName('input') as $input) {
+            $name = $input->getAttribute('name');
+            $type = strtolower($input->getAttribute('type'));
+            // Of the buttons only "run the action" is sent, not "cancel".
+            if ($name === '' || ($type === 'submit' && $name !== 'action_doConfirm')) {
+                continue;
+            }
+            $fields[$name] = $input->getAttribute('value');
+        }
+        $fields['action_doConfirm'] ??= '1';
+        $action = (string) UriResolver::resolve(
+            new Uri($confirmUrl),
+            new Uri($form->getAttribute('action') ?: $confirmUrl)
+        );
+        return $client->post($action, ['form_params' => $fields]);
     }
 
     /**
